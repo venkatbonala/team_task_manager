@@ -1,70 +1,46 @@
 from flask import Flask, request, jsonify, render_template
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
 import os
-from urllib.parse import urlparse
 
 app = Flask(__name__)
 
+# Use /tmp directory for database (Railway allows this)
+DB_PATH = "/tmp/database.db"
+
 # ---------- DATABASE ----------
-def get_db_connection():
-    """Get PostgreSQL connection from DATABASE_URL"""
-    database_url = os.environ.get("DATABASE_URL")
-    
-    if not database_url:
-        # Fallback for local development
-        return psycopg2.connect(
-            host="localhost",
-            database="team_task_manager",
-            user="postgres",
-            password="password"
-        )
-    
-    # Parse Railway's DATABASE_URL
-    result = urlparse(database_url)
-    conn = psycopg2.connect(
-        host=result.hostname,
-        database=result.path[1:],
-        user=result.username,
-        password=result.password,
-        port=result.port
-    )
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    """Initialize database tables"""
-    conn = get_db_connection()
+    conn = get_db()
     cursor = conn.cursor()
-    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
             email TEXT UNIQUE,
             password TEXT,
             role TEXT
         )
     """)
-    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT,
             description TEXT,
             status TEXT
         )
     """)
-    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS projects (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
             created_by INTEGER
         )
     """)
-    
     conn.commit()
-    cursor.close()
     conn.close()
 
 # Initialize database on startup
@@ -95,19 +71,17 @@ def projects_page():
 def signup():
     data = request.json
     try:
-        conn = get_db_connection()
+        conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO users (name, email, password, role) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
             (data["name"], data["email"], data["password"], data.get("role", "user"))
         )
         conn.commit()
-        cursor.close()
         conn.close()
         return jsonify({"success": True})
-    except psycopg2.IntegrityError:
+    except sqlite3.IntegrityError:
         conn.rollback()
-        cursor.close()
         conn.close()
         return jsonify({"success": False, "message": "Email already exists"})
     except Exception as e:
@@ -117,14 +91,13 @@ def signup():
 def login():
     data = request.json
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db()
+        cursor = conn.cursor()
         cursor.execute(
-            "SELECT * FROM users WHERE email=%s AND password=%s",
+            "SELECT * FROM users WHERE email=? AND password=?",
             (data["email"], data["password"])
         )
         user = cursor.fetchone()
-        cursor.close()
         conn.close()
         
         if user:
@@ -138,10 +111,10 @@ def login():
 def create_task():
     data = request.json
     try:
-        conn = get_db_connection()
+        conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO tasks (title, description, status) VALUES (%s, %s, %s)",
+            "INSERT INTO tasks (title, description, status) VALUES (?, ?, ?)",
             (
                 data.get("title"),
                 data.get("description"),
@@ -149,7 +122,6 @@ def create_task():
             )
         )
         conn.commit()
-        cursor.close()
         conn.close()
         return jsonify({"success": True})
     except Exception as e:
@@ -158,11 +130,10 @@ def create_task():
 @app.route("/get_tasks")
 def get_tasks():
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db()
+        cursor = conn.cursor()
         cursor.execute("SELECT * FROM tasks")
         tasks = cursor.fetchall()
-        cursor.close()
         conn.close()
         return jsonify([dict(t) for t in tasks])
     except Exception as e:
@@ -172,14 +143,13 @@ def get_tasks():
 def update_task():
     data = request.json
     try:
-        conn = get_db_connection()
+        conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE tasks SET status=%s WHERE id=%s",
+            "UPDATE tasks SET status=? WHERE id=?",
             (data["status"], data["task_id"])
         )
         conn.commit()
-        cursor.close()
         conn.close()
         return jsonify({"success": True})
     except Exception as e:
@@ -189,13 +159,12 @@ def update_task():
 @app.route("/dashboard")
 def dashboard():
     try:
-        conn = get_db_connection()
+        conn = get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM tasks")
         total = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM tasks WHERE status='Done'")
         done = cursor.fetchone()[0]
-        cursor.close()
         conn.close()
         return jsonify({
             "total": total,
@@ -210,17 +179,16 @@ def dashboard():
 def create_project():
     data = request.json
     try:
-        conn = get_db_connection()
+        conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO projects (name, created_by) VALUES (%s, %s)",
+            "INSERT INTO projects (name, created_by) VALUES (?, ?)",
             (
                 data.get("name"),
                 data.get("created_by")
             )
         )
         conn.commit()
-        cursor.close()
         conn.close()
         return jsonify({"success": True})
     except Exception as e:
@@ -229,11 +197,10 @@ def create_project():
 @app.route("/get_projects")
 def get_projects():
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db()
+        cursor = conn.cursor()
         cursor.execute("SELECT * FROM projects")
         projects = cursor.fetchall()
-        cursor.close()
         conn.close()
         return jsonify([dict(p) for p in projects])
     except Exception as e:
